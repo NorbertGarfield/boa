@@ -451,8 +451,8 @@ fn insert_unicode_extension_and_canonicalize(locale: &str, extension: &str) -> J
 ///
 /// It is an alias for a map where key is a string and value is another map.
 ///
-/// Value of that inner map is a vector of strings representing locale parameters.
-type LocaleDataRecord = FxHashMap<JsString, FxHashMap<JsString, Vec<JsString>>>;
+/// Value of that inner map is a `JsValue` representing locale parameters.
+type LocaleDataRecord = FxHashMap<JsString, FxHashMap<JsString, JsValue>>;
 
 /// `DateTimeFormatRecord` type aggregates `locale_matcher` selector and `properties` map.
 ///
@@ -542,15 +542,30 @@ fn resolve_locale(
         // TODO d. Assert: Type(keyLocaleData) is List.
         let key_locale_data = match found_locale_data.get(key) {
             Some(locale_vec) => locale_vec.clone(),
-            None => Vec::new(),
+            None => JsValue::undefined(),
         };
+
+        let key_locale_data = key_locale_data
+            .to_object(context)
+            .expect("Failed to cast locale data to object");
 
         // e. Let value be keyLocaleData[0].
         // TODO f. Assert: Type(value) is either String or Null.
-        let mut value = match key_locale_data.get(0) {
-            Some(first_elt) => JsValue::String(first_elt.clone()),
-            None => JsValue::null(),
+        let mut value = match key_locale_data.get(0, context) {
+            Ok(first_elt) => first_elt.clone(),
+            Err(_) => JsValue::null(),
         };
+
+        let mut key_locale_data_arr = Vec::<JsValue>::new();
+        let key_locale_data_len = key_locale_data
+            .length_of_array_like(context)
+            .expect("Failed to get array length");
+        for idx in 0..key_locale_data_len {
+            let locale_data_elt = key_locale_data
+                .get(idx, context)
+                .unwrap_or_else(|_| JsValue::undefined());
+            key_locale_data_arr.push(locale_data_elt);
+        }
 
         // g. Let supportedExtensionAddition be "".
         let mut supported_extension_addition = JsString::empty();
@@ -567,7 +582,7 @@ fn resolve_locale(
                 // 3. If requestedValue is not the empty String, then
                 if !requested_value.is_empty() {
                     // a. If keyLocaleData contains requestedValue, then
-                    if key_locale_data.contains(requested_value) {
+                    if key_locale_data_arr.contains(&JsValue::String(requested_value.clone())) {
                         // i. Let value be requestedValue.
                         value = JsValue::String(JsString::new(requested_value));
                         // ii. Let supportedExtensionAddition be the string-concatenation
@@ -576,7 +591,7 @@ fn resolve_locale(
                             JsString::concat_array(&["-", key, "-", requested_value]);
                     }
                 // 4. Else if keyLocaleData contains "true", then
-                } else if key_locale_data.contains(&JsString::new("true")) {
+                } else if key_locale_data_arr.contains(&JsValue::String(JsString::new("true"))) {
                     // a. Let value be "true".
                     value = JsValue::String(JsString::new("true"));
                     // b. Let supportedExtensionAddition be the string-concatenation of "-" and key.
@@ -618,10 +633,7 @@ fn resolve_locale(
             }
 
             // iv. If keyLocaleData contains optionsValue, then
-            let options_val_str = options_value
-                .to_string(context)
-                .unwrap_or_else(|_| JsString::empty());
-            if key_locale_data.contains(&options_val_str) {
+            if key_locale_data_arr.contains(&options_value) {
                 // 1. If SameValue(optionsValue, value) is false, then
                 if !options_value.eq(&value) {
                     // a. Let value be optionsValue.
@@ -652,4 +664,140 @@ fn resolve_locale(
 
     // 12. Return result.
     result
+}
+
+/// The abstract operation `GetOption` extracts the value of the property named `property` from the
+/// provided `options` object, converts it to the required `type`, checks whether it is one of a
+/// `List` of allowed `values`, and fills in a `fallback` value if necessary. If `values` is
+/// undefined, there is no fixed set of values and any is permitted.
+///
+/// More information:
+///  - [ECMAScript reference][spec]
+///
+/// [spec]: https://tc39.es/ecma402/#sec-getoption
+pub(crate) fn get_option(
+    options: &JsValue,
+    property: &str,
+    r#type: &str,
+    values: &[JsValue],
+    fallback: &JsValue,
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    // 1. Assert: Type(options) is Object.
+    if !options.is_object() {
+        return context.throw_type_error("GetOption: options should be an Object");
+    }
+
+    let options_obj = options
+        .to_object(context)
+        .expect("GetOption: options should be an Object");
+
+    // 2. Let value be ? Get(options, property).
+    let mut value = options_obj
+        .get(property, context)
+        .unwrap_or_else(|_| JsValue::undefined());
+
+    // 3. If value is undefined, return fallback.
+    if value.is_undefined() {
+        return Ok(fallback.clone());
+    }
+
+    // 4. Assert: type is "boolean" or "string".
+    if r#type.ne("boolean") && r#type.ne("string") {
+        return context.throw_type_error("GetOption: type should be either 'boolean' or 'string'");
+    }
+
+    // 5. If type is "boolean", then
+    if r#type.eq("boolean") {
+        // a. Set value to ! ToBoolean(value).
+        value = JsValue::Boolean(value.to_boolean());
+    }
+
+    // 6. If type is "string", then
+    if r#type.eq("string") {
+        // a. Set value to ? ToString(value).
+        value = JsValue::String(
+            value
+                .to_string(context)
+                .expect("GetOption: failed to convert value to string"),
+        );
+    }
+
+    // 7. If values is not undefined and values does not contain an element equal to value,
+    // throw a RangeError exception.
+    if !values.is_empty() && !values.contains(&value) {
+        return context.throw_range_error("GetOption: values array does not contain value");
+    }
+
+    // 8. Return value.
+    Ok(value)
+}
+
+/// The abstract operation `GetNumberOption` extracts the value of the property named `property`
+/// from the provided `options` object, converts it to a `Number value`, checks whether it is in
+/// the allowed range, and fills in a `fallback` value if necessary.
+///
+/// More information:
+///  - [ECMAScript reference][spec]
+///
+/// [spec]: https://tc39.es/ecma402/#sec-getnumberoption
+pub(crate) fn get_number_option(
+    options: &JsValue,
+    property: &str,
+    minimum: &JsValue,
+    maximum: &JsValue,
+    fallback: &JsValue,
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    // FIXME untested
+    // 1. Assert: Type(options) is Object.
+    if !options.is_object() {
+        return context.throw_type_error("GetOption: options should be an Object");
+    }
+
+    let options_obj = options
+        .to_object(context)
+        .expect("GetOption: options should be an Object");
+
+    // 2. Let value be ? Get(options, property).
+    let value = options_obj
+        .get(property, context)
+        .unwrap_or_else(|_| JsValue::undefined());
+
+    // 3. Return ? DefaultNumberOption(value, minimum, maximum, fallback).
+    default_number_option(&value, minimum, maximum, fallback, context)
+}
+
+/// The abstract operation `DefaultNumberOption` converts `value` to a `Number value`, checks
+/// whether it is in the allowed range, and fills in a `fallback` value if necessary.
+///
+/// More information:
+///  - [ECMAScript reference][spec]
+///
+/// [spec]: https://tc39.es/ecma402/#sec-defaultnumberoption
+pub(crate) fn default_number_option(
+    value: &JsValue,
+    minimum: &JsValue,
+    maximum: &JsValue,
+    fallback: &JsValue,
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    // FIXME untested
+    // 1. If value is undefined, return fallback.
+    if value.is_undefined() {
+        return Ok(fallback.clone());
+    }
+
+    // 2. Set value to ? ToNumber(value).
+    let value = value.to_number(context)?;
+    let minimum = minimum.to_number(context).unwrap_or(f64::NEG_INFINITY);
+    let maximum = maximum.to_number(context).unwrap_or(f64::INFINITY);
+
+    // 3. If value is NaN or less than minimum or greater than maximum, throw a RangeError exception.
+    if value.is_nan() || value.lt(&minimum) || value.gt(&maximum) {
+        return context.throw_range_error("DefaultNumberOption: value is out of range.");
+    }
+
+    // 4. Return floor(value).
+    Ok(JsValue::new(value.floor()))
 }

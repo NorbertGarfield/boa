@@ -1,4 +1,4 @@
-use crate::{Context, JsString};
+use crate::{object::JsObject, Context, JsString, JsValue};
 
 use rustc_hash::FxHashMap;
 
@@ -243,4 +243,276 @@ fn locale_resolution() {
         crate::builtins::intl::default_locale()
     );
     assert_eq!(locale_record.properties.is_empty(), true);
+}
+
+#[test]
+fn get_opt() {
+    let mut context = Context::default();
+
+    let values = Vec::<JsValue>::new();
+    let options_obj = JsValue::undefined();
+    let get_option_result = crate::builtins::intl::get_option(
+        &options_obj,
+        "",
+        "",
+        &values,
+        &JsValue::String(JsString::empty()),
+        &mut context,
+    );
+    assert_eq!(get_option_result.is_err(), true);
+
+    let values = Vec::<JsValue>::new();
+    let fallback = JsValue::String(JsString::new("fallback"));
+    let options_obj = JsValue::new(JsObject::empty());
+    let get_option_result =
+        crate::builtins::intl::get_option(&options_obj, "", "", &values, &fallback, &mut context)
+            .expect("GetOption should not fail on fallback test");
+    assert_eq!(get_option_result, fallback);
+
+    let values = Vec::<JsValue>::new();
+    let fallback = JsValue::String(JsString::new("fallback"));
+    let options_obj = JsObject::empty();
+    let locale_value = JsValue::String(JsString::new("en-US"));
+    options_obj
+        .set("Locale", locale_value.clone(), true, &mut context)
+        .expect("Setting a property should not fail");
+    let get_option_result = crate::builtins::intl::get_option(
+        &JsValue::new(options_obj),
+        "Locale",
+        "number",
+        &values,
+        &fallback,
+        &mut context,
+    );
+    assert_eq!(get_option_result.is_err(), true);
+
+    let values = Vec::<JsValue>::new();
+    let fallback = JsValue::String(JsString::new("fallback"));
+    let options_obj = JsObject::empty();
+    let locale_value = JsValue::String(JsString::new("en-US"));
+    options_obj
+        .set("Locale", locale_value.clone(), true, &mut context)
+        .expect("Setting a property should not fail");
+    let get_option_result = crate::builtins::intl::get_option(
+        &JsValue::new(options_obj),
+        "Locale",
+        "string",
+        &values,
+        &fallback,
+        &mut context,
+    )
+    .expect("GetOption should not fail on string test");
+    assert_eq!(get_option_result, locale_value);
+
+    let fallback = JsValue::String(JsString::new("fallback"));
+    let options_obj = JsObject::empty();
+    let locale_value = JsValue::String(JsString::new("en-US"));
+    let values = vec![locale_value.clone()];
+    options_obj
+        .set("Locale", locale_value.clone(), true, &mut context)
+        .expect("Setting a property should not fail");
+    let get_option_result = crate::builtins::intl::get_option(
+        &JsValue::new(options_obj),
+        "Locale",
+        "string",
+        &values,
+        &fallback,
+        &mut context,
+    )
+    .expect("GetOption should not fail on values test");
+    assert_eq!(get_option_result, locale_value);
+
+    let fallback = JsValue::String(JsString::new("fallback"));
+    let options_obj = JsObject::empty();
+    let locale_value = JsValue::String(JsString::new("en-US"));
+    let other_locale_value = JsValue::String(JsString::new("de-DE"));
+    let values = vec![other_locale_value];
+    options_obj
+        .set("Locale", locale_value.clone(), true, &mut context)
+        .expect("Setting a property should not fail");
+    let get_option_result = crate::builtins::intl::get_option(
+        &JsValue::new(options_obj),
+        "Locale",
+        "string",
+        &values,
+        &fallback,
+        &mut context,
+    );
+    assert_eq!(get_option_result.is_err(), true);
+}
+
+#[test]
+fn to_date_time_opts() {
+    let mut context = Context::default();
+
+    let options_obj = JsObject::empty();
+    options_obj
+        .set("timeStyle", JsObject::empty(), true, &mut context)
+        .expect("Setting a property should not fail");
+    let date_time_opts = crate::builtins::intl::date_time_format::to_date_time_options(
+        &JsValue::new(options_obj),
+        "date",
+        "date",
+        &mut context,
+    );
+    assert_eq!(date_time_opts.is_err(), true);
+
+    let options_obj = JsObject::empty();
+    options_obj
+        .set("dateStyle", JsObject::empty(), true, &mut context)
+        .expect("Setting a property should not fail");
+    let date_time_opts = crate::builtins::intl::date_time_format::to_date_time_options(
+        &JsValue::new(options_obj),
+        "time",
+        "time",
+        &mut context,
+    );
+    assert_eq!(date_time_opts.is_err(), true);
+
+    let date_time_opts = crate::builtins::intl::date_time_format::to_date_time_options(
+        &JsValue::undefined(),
+        "date",
+        "date",
+        &mut context,
+    )
+    .expect("toDateTimeOptions should not fail in date test");
+
+    let numeric_jsstring = JsValue::String(JsString::new("numeric"));
+    assert_eq!(
+        date_time_opts.get("year", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("month", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("day", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+
+    let date_time_opts = crate::builtins::intl::date_time_format::to_date_time_options(
+        &JsValue::undefined(),
+        "time",
+        "time",
+        &mut context,
+    )
+    .expect("toDateTimeOptions should not fail in time test");
+
+    let numeric_jsstring = JsValue::String(JsString::new("numeric"));
+    assert_eq!(
+        date_time_opts.get("hour", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("minute", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("second", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+
+    let date_time_opts = crate::builtins::intl::date_time_format::to_date_time_options(
+        &JsValue::undefined(),
+        "any",
+        "all",
+        &mut context,
+    )
+    .expect("toDateTimeOptions should not fail when testing required = 'any'");
+
+    let numeric_jsstring = JsValue::String(JsString::new("numeric"));
+    assert_eq!(
+        date_time_opts.get("year", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("month", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("day", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("hour", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("minute", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+    assert_eq!(
+        date_time_opts.get("second", &mut context),
+        Ok(numeric_jsstring.clone())
+    );
+}
+
+#[test]
+fn nonterminals() {
+    let mut context = Context::default();
+
+    let nonterminal_calendar_options = vec![
+        JsValue::String(JsString::new("")),
+        JsValue::String(JsString::new("a")),
+        JsValue::String(JsString::new("ab")),
+        JsValue::String(JsString::new("abcdefghi")),
+        JsValue::String(JsString::new("abc-abcdefghi")),
+        JsValue::String(JsString::new("!invalid!")),
+        JsValue::String(JsString::new("-gregory-")),
+        JsValue::String(JsString::new("gregory-")),
+        JsValue::String(JsString::new("gregory--")),
+        JsValue::String(JsString::new("gregory-nu")),
+        JsValue::String(JsString::new("gregory-nu-")),
+        JsValue::String(JsString::new("gregory-nu-latn")),
+        JsValue::String(JsString::new("gregoryé")),
+        JsValue::String(JsString::new("gregory역법")),
+    ];
+
+    for calendar_opt in nonterminal_calendar_options {
+        assert_eq!(
+            crate::builtins::intl::date_time_format::is_nonterminal(&calendar_opt, &mut context),
+            false
+        );
+    }
+
+    let terminal_calendar_options = vec![
+        JsValue::String(JsString::new("buddhist")),
+        JsValue::String(JsString::new("chinese")),
+        JsValue::String(JsString::new("coptic")),
+        JsValue::String(JsString::new("dangi")),
+        JsValue::String(JsString::new("ethioaa")),
+        JsValue::String(JsString::new("ethiopic")),
+        JsValue::String(JsString::new("gregory")),
+        JsValue::String(JsString::new("hebrew")),
+        JsValue::String(JsString::new("indian")),
+        JsValue::String(JsString::new("islamic")),
+        JsValue::String(JsString::new("islamic-umalqura")),
+        JsValue::String(JsString::new("islamic-tbla")),
+        JsValue::String(JsString::new("islamic-civil")),
+        JsValue::String(JsString::new("islamic-rgsa")),
+        JsValue::String(JsString::new("iso8601")),
+        JsValue::String(JsString::new("japanese")),
+        JsValue::String(JsString::new("persian")),
+        JsValue::String(JsString::new("roc")),
+    ];
+
+    for calendar_opt in terminal_calendar_options {
+        assert_eq!(
+            crate::builtins::intl::date_time_format::is_nonterminal(&calendar_opt, &mut context),
+            true
+        );
+    }
+}
+
+#[test]
+fn build_date_time_fmt() {
+    let mut context = Context::default();
+
+    let date_time_fmt_obj = crate::builtins::intl::date_time_format::DateTimeFormat::constructor(
+        &JsValue::undefined(),
+        &Vec::<JsValue>::new(),
+        &mut context,
+    );
+    assert_eq!(date_time_fmt_obj.is_err(), false);
 }
